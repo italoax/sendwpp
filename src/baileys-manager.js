@@ -13,6 +13,8 @@ import {
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import { normalizeBrazilPhone, resolveSessionName, toJid } from "./utils.js";
+import { downloadBuffer } from "./media-download.js";
+export { downloadBuffer } from "./media-download.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "silent" });
 
@@ -129,14 +131,19 @@ export class BaileysSessionManager {
     session.status = "iniciando";
     session.lastError = "";
 
+    const generation = session.connectionGeneration;
     session.starting = this.createSocket(session)
       .catch((error) => {
-        session.status = "erro";
-        session.lastError = error instanceof Error ? error.message : String(error);
+        if (session.connectionGeneration === generation) {
+          session.status = "reconectando";
+          session.lastError = error instanceof Error ? error.message : String(error);
+        }
         throw error;
       })
       .finally(() => {
+        if (session.connectionGeneration !== generation) return;
         session.starting = null;
+        if (session.status === "reconectando") this.scheduleReconnect(session);
       });
 
     await session.starting;
@@ -183,14 +190,19 @@ export class BaileysSessionManager {
     session.status = "iniciando";
     session.lastError = "";
 
+    const generation = session.connectionGeneration;
     session.starting = this.createSocket(session)
       .catch((error) => {
-        session.status = "erro";
-        session.lastError = error instanceof Error ? error.message : String(error);
+        if (session.connectionGeneration === generation) {
+          session.status = "erro";
+          session.lastError = error instanceof Error ? error.message : String(error);
+        }
         throw error;
       })
       .finally(() => {
+        if (session.connectionGeneration !== generation) return;
         session.starting = null;
+        if (session.status === "reconectando") this.scheduleReconnect(session);
       });
 
     await session.starting;
@@ -199,14 +211,17 @@ export class BaileysSessionManager {
 
   async stop(sessionName) {
     const session = this.getOrCreateState(sessionName);
+    session.connectionGeneration++;
     if (session.reconnectTimer) {
       clearTimeout(session.reconnectTimer);
       session.reconnectTimer = null;
     }
     session.reconnectAttempts = 0;
+    const socket = session.socket;
+    session.socket = null;
     try {
-      session.socket?.end?.(undefined);
-      session.socket?.ws?.close?.();
+      socket?.end?.(undefined);
+      socket?.ws?.close?.();
     } catch {
       // Ignora erros ao encerrar conexão antiga.
     }
@@ -460,6 +475,7 @@ export class BaileysSessionManager {
         name,
         socket: null,
         starting: null,
+        connectionGeneration: 0,
         status: "desconectado",
         qr: "",
         qrImage: "",
@@ -550,10 +566,12 @@ export class BaileysSessionManager {
   }
 
   async createSocket(session) {
+    const generation = session.connectionGeneration;
     fs.mkdirSync(this.sessionsDir, { recursive: true });
     const sessionDir = path.join(this.sessionsDir, session.name);
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
+    if (session.connectionGeneration !== generation) return null;
 
     const socket = makeWASocket({
       version,
@@ -582,7 +600,9 @@ export class BaileysSessionManager {
 
     session.msgStore = session.msgStore || new Map();
     session.socket = socket;
-    socket.ev.on("creds.update", saveCreds);
+    socket.ev.on("creds.update", () => {
+      if (session.socket === socket) return saveCreds();
+    });
     socket.ev.on("messaging-history.set", ({ contacts }) => this.rememberStatusContacts(session, contacts));
     socket.ev.on("contacts.upsert", contacts => this.rememberStatusContacts(session, contacts));
     socket.ev.on("contacts.update", contacts => this.rememberStatusContacts(session, contacts));
@@ -618,12 +638,16 @@ export class BaileysSessionManager {
     // o WhatsApp no celular e ver o que é novo (indicador de não-lida intacto).
 
     socket.ev.on("connection.update", async (update) => {
+      // Eventos atrasados de um socket encerrado não podem alterar a sessão atual.
+      if (session.socket !== socket) return;
       const { connection, lastDisconnect, qr } = update;
 
       // No modo de pareamento por código, ignoramos o QR (mostramos só o código).
       if (qr && !session.usePairingCode) {
+        const qrImage = await qrcode.toDataURL(qr);
+        if (session.socket !== socket) return;
         session.qr = qr;
-        session.qrImage = await qrcode.toDataURL(qr);
+        session.qrImage = qrImage;
         session.status = "qr";
       }
 
@@ -704,12 +728,14 @@ export class BaileysSessionManager {
       for (let tentativa = 1; tentativa <= 2 && !code; tentativa++) {
         try {
           await new Promise((resolve) => setTimeout(resolve, tentativa === 1 ? 3000 : 4000));
+          if (session.connectionGeneration !== generation || session.socket !== socket) return null;
           if (state.creds.registered) break; // pareou nesse meio-tempo (ex.: QR lido)
           code = await socket.requestPairingCode(session.pairingNumber);
         } catch (error) {
           ultimoErro = error;
         }
       }
+      if (session.connectionGeneration !== generation || session.socket !== socket) return null;
       if (code) {
         session.pairingCode = code;
         session.status = "pairing";
@@ -735,14 +761,17 @@ export class BaileysSessionManager {
     session.reconnectTimer = setTimeout(() => {
       session.reconnectTimer = null;
       if (session.starting || (session.socket && session.status === "conectado")) return;
+      const generation = session.connectionGeneration;
       session.starting = this.createSocket(session)
         .catch((error) => {
-          session.status = "erro";
+          if (session.connectionGeneration !== generation) return;
+          session.status = "reconectando";
           session.lastError = error instanceof Error ? error.message : String(error);
-          this.scheduleReconnect(session);
         })
         .finally(() => {
+          if (session.connectionGeneration !== generation) return;
           session.starting = null;
+          if (session.status === "reconectando") this.scheduleReconnect(session);
         });
     }, delay);
   }
@@ -755,16 +784,6 @@ export class BaileysSessionManager {
       // Ignora se a pasta não existir ou estiver em uso.
     }
   }
-}
-
-export async function downloadBuffer(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Falha ao baixar mídia: HTTP ${response.status}`);
-  const arrayBuffer = await response.arrayBuffer();
-  return {
-    buffer: Buffer.from(arrayBuffer),
-    contentType: response.headers.get("content-type") || "",
-  };
 }
 
 // Carrega a mupdf (WASM) só uma vez. Import dinâmico: se a lib não estiver

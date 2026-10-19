@@ -139,8 +139,8 @@ try {
 
   copy("src");
   copy("package.json");
+  copy("package-lock.json");
   copy("README.md");
-  copy(".env.example");
 
   fs.writeFileSync(path.join(deployDir, "Procfile"), "web: node --v8-pool-size=1 src/server.js\n");
   console.log("🚀 Arquivo Procfile criado...");

@@ -9,11 +9,16 @@
  * @returns {string} Apenas dígitos, ex.: "5511999998888".
  */
 export function normalizeBrazilPhone(phone, defaultCountry = "55") {
-  let digits = String(phone ?? "").replace(/\D+/g, "");
+  const raw = String(phone ?? "").trim();
+  const international = raw.startsWith("+") || raw.startsWith("00");
+  let digits = raw.replace(/\D+/g, "");
   if (digits.startsWith("00")) digits = digits.slice(2);
   digits = digits.replace(/^0+/, "");
 
-  if (defaultCountry === "55" && !digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+  if (!digits || international) return digits;
+
+  // O DDD 55 também é nacional: o comprimento distingue DDD de DDI.
+  if (defaultCountry === "55" && (digits.length === 10 || digits.length === 11)) {
     return `55${digits}`;
   }
 

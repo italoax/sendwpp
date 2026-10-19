@@ -1,6 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 
-export function requireToken(expectedToken) {
+export function requireToken(expectedToken, { environment = process.env.NODE_ENV } = {}) {
+  expectedToken = String(expectedToken ?? "").trim();
+  if (!expectedToken && environment === "production") {
+    throw new Error("Configure API_TOKEN antes de iniciar a API em produção.");
+  }
   if (!expectedToken) {
     console.warn("[whatsapp-api] API_TOKEN vazio — autenticação desativada (USE SÓ EM DEV).");
   }
