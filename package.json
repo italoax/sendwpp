@@ -7,7 +7,6 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node --v8-pool-size=1 src/server.js",
-    "deploy": "node scripts/deploy.mjs",
     "test": "node --test"
   },
   "dependencies": {
