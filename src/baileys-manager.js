@@ -7,6 +7,7 @@ import {
   DisconnectReason,
   fetchLatestBaileysVersion,
   generateWAMessage,
+  generateWAMessageFromContent,
   generateMessageIDV2,
   makeWASocket,
   jidNormalizedUser,
@@ -14,6 +15,7 @@ import {
 } from "@whiskeysockets/baileys";
 import { normalizeBrazilPhone, resolveSessionName, toJid } from "./utils.js";
 import { downloadBuffer } from "./media-download.js";
+import { pixPaymentParameters } from './pix-payment.js';
 export { downloadBuffer } from "./media-download.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "silent" });
@@ -244,6 +246,46 @@ export class BaileysSessionManager {
     const response = await socket.sendMessage(jid, { text: String(body || "") });
     rememberMessage(session, response?.key?.id, response?.message);
     return { ok: true, response, messageId: response?.key?.id || "" };
+  }
+
+  async sendPixPayment(sessionName, number, payload) {
+    const { body, parameters } = pixPaymentParameters(payload);
+    if (!/^\+?[\d().\s-]{10,24}$/.test(String(number ?? ''))) {
+      const error = new Error('Informe o telefone do destinatário com DDD.');
+      error.statusCode = 400;
+      throw error;
+    }
+    const socket = await this.requireConnectedSocket(sessionName);
+    const session = this.getOrCreateState(sessionName);
+    const jid = await this.resolveJid(socket, number);
+    const message = generateWAMessageFromContent(jid, {
+      interactiveMessage: {
+        body: { text: body },
+        nativeFlowMessage: {
+          buttons: [{ name: 'payment_info', buttonParamsJson: JSON.stringify(parameters) }],
+          messageParamsJson: '{}',
+          messageVersion: 1,
+        },
+      },
+    }, { userJid: socket.user.id, messageId: generateMessageIDV2(socket.user.id) });
+    // Salva antes de enviar para atender pedidos de reenvio do destinatário.
+    rememberMessage(session, message.key.id, message.message);
+    const confirmation = socket.waitForMessage(message.key.id, 20_000)
+      .then(node => ({ node }), error => ({ error }));
+    await socket.relayMessage(jid, message.message, {
+      messageId: message.key.id,
+      additionalNodes: [
+        { tag: 'bot', attrs: { biz_bot: '1' } },
+        { tag: 'biz', attrs: { native_flow_name: 'payment_info' } },
+      ],
+    });
+    const { node, error } = await confirmation;
+    if (error || node?.tag !== 'ack' || node.attrs?.class !== 'message')
+      throw new Error('O WhatsApp não confirmou o envio da cobrança. Confira a conversa antes de tentar novamente.');
+    if (node.attrs?.error)
+      throw new Error(`O WhatsApp recusou a cobrança Pix (código ${node.attrs.error}).`);
+    // Confirmação de transporte; não representa pagamento nem exibição no celular.
+    return { ok: true, messageId: message.key.id, referenceId: parameters.reference_id, accepted: true };
   }
 
   // Publica um Status (story) do WhatsApp. Tipo:

@@ -106,6 +106,20 @@ export function createApp({ manager, apiToken }) {
     }
   });
 
+  app.post('/api/messages/send/pix', async (req, res) => {
+    try {
+      const session = req.body?.session || req.body?.sessao || req.body?.sessionName;
+      const number = req.body?.number || req.body?.to || req.body?.telefone;
+      if (!number) return res.status(400).json({ ok: false, error: 'Informe number.' });
+      const result = await manager.sendPixPayment(session, number, {
+        amount: req.body.amount, body: req.body.body, pix: req.body.pix,
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(error.statusCode === 400 ? 400 : 500).json({ ok: false, error: errorMessage(error) });
+    }
+  });
+
   app.post("/api/messages/send/media", async (req, res) => {
     try {
       const session = req.body.session || req.body.sessao || req.body.sessionName;
