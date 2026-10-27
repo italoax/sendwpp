@@ -11,30 +11,27 @@ const payment = {
   pix: { key: 'recebimentos@example.com', keyType: 'Email', merchantName: 'Titular' },
 };
 
-test('preserva os centavos e gera referências distintas para cobranças pendentes', () => {
-  const first = pixPaymentParameters(payment).parameters;
-  assert.deepEqual(first.total_amount, { value: 3001, offset: 100 });
-  assert.equal(first.order.status, 'pending');
-  assert.equal(first.order_type, 'PAYMENT_REQUEST');
-  assert.equal(first.payment_type, 'br');
-  assert.equal(first.payment_status, undefined);
-  assert.notEqual(first.reference_id, pixPaymentParameters(payment).parameters.reference_id);
-  assert.equal(pixPaymentParameters({ ...payment, amount: '0.01' }).parameters.total_amount.value, 1);
-  assert.equal(pixPaymentParameters({ ...payment, amount: 30 }).parameters.total_amount.value, 3000);
+test('mantém referências privadas e aceita valores em reais sem embutir um pedido no botão', () => {
+  const first = pixPaymentParameters(payment);
+  assert.notEqual(first.referenceId, pixPaymentParameters(payment).referenceId);
+  for (const amount of ['0.01', '30.01', 30]) {
+    assert.deepEqual(pixPaymentParameters({ ...payment, amount }).parameters, {
+      display_text: 'Copiar chave Pix', copy_code: payment.pix.key,
+    });
+  }
 });
 
 test('normaliza os tipos de chave usados em Minha Conta sem alterar email ou EVP', () => {
-  for (const [keyType, key, expectedType, expectedKey] of [
-    ['Celular', '(11) 99999-9999', 'PHONE', '+5511999999999'],
-    ['PHONE', '+55 11 99999-9999', 'PHONE', '+5511999999999'],
-    ['CPF', '123.456.789-01', 'CPF', '12345678901'],
-    ['CNPJ', '12.345.678/0001-90', 'CNPJ', '12345678000190'],
-    ['Email', 'a@example.com', 'EMAIL', 'a@example.com'],
-    ['Aleatória', '12345678-1234-1234-1234-123456789abc', 'EVP', '12345678-1234-1234-1234-123456789abc'],
+  for (const [keyType, key, expectedKey] of [
+    ['Celular', '(11) 99999-9999', '+5511999999999'],
+    ['PHONE', '+55 11 99999-9999', '+5511999999999'],
+    ['CPF', '123.456.789-01', '12345678901'],
+    ['CNPJ', '12.345.678/0001-90', '12345678000190'],
+    ['Email', 'a@example.com', 'a@example.com'],
+    ['Aleatória', '12345678-1234-1234-1234-123456789abc', '12345678-1234-1234-1234-123456789abc'],
   ]) {
     const params = pixPaymentParameters({ ...payment, pix: { ...payment.pix, keyType, key } }).parameters;
-    assert.equal(params.payment_settings[0].pix_static_code.key_type, expectedType);
-    assert.equal(params.payment_settings[0].pix_static_code.key, expectedKey);
+    assert.equal(params.copy_code, expectedKey);
   }
 });
 
@@ -67,7 +64,7 @@ function fixture() {
   return { manager, session, sends };
 }
 
-test('envia solicitação com valor via review_and_pay e order_details, em vez de copiar chave', async () => {
+test('envia só a mensagem e a ação de copiar a chave, sem resumo ou controles de pedido', async () => {
   const { manager, sends } = fixture();
   const result = await manager.sendPixPayment('test', '11999999999', payment);
   assert.equal(result.ok, true);
@@ -75,28 +72,28 @@ test('envia solicitação com valor via review_and_pay e order_details, em vez d
   const decoded = proto.Message.decode(proto.Message.encode(sends[0][1]).finish());
   const flow = decoded.interactiveMessage.nativeFlowMessage;
   assert.equal(flow.buttons.length, 1);
-  assert.equal(flow.buttons[0].name, 'review_and_pay');
+  assert.equal(flow.buttons[0].name, 'cta_copy');
   const params = JSON.parse(flow.buttons[0].buttonParamsJson);
-  assert.equal(params.reference_id, result.referenceId);
-  assert.equal(params.total_amount.value, 3001);
-  assert.equal(params.order.status, 'pending');
-  assert.equal(params.order_type, 'PAYMENT_REQUEST');
-  assert.equal(params.currency, 'BRL');
-  assert.equal(params.payment_status, undefined);
-  assert.equal(params.payment_timestamp, undefined);
-  assert.equal(params.order.items[0].amount.value * params.order.items[0].quantity, params.total_amount.value);
-  assert.deepEqual(params.order.tax, { value: 0, offset: 100 });
-  assert.equal(params.payment_settings[0].pix_static_code.key, payment.pix.key);
-  assert.equal(sends[0][2].additionalNodes.find(node => node.tag === 'biz').attrs.native_flow_name, 'order_details');
+  assert.deepEqual(params, { display_text: 'Copiar chave Pix', copy_code: payment.pix.key });
+  assert.equal(decoded.interactiveMessage.body.text, payment.body);
+  assert.equal(decoded.interactiveMessage.header, null);
+  assert.equal(JSON.stringify(decoded).includes(result.referenceId), false);
+  assert.doesNotMatch(JSON.stringify(decoded), /order_details|review_and_pay|payment_info|total_amount|retailer_id|quantity/);
+  const biz = sends[0][2].additionalNodes.find(node => node.tag === 'biz');
+  assert.equal(biz.attrs.native_flow_name, undefined);
+  assert.equal(biz.content[0].attrs.type, 'native_flow');
+  assert.equal(biz.content[0].content[0].attrs.name, 'mixed');
 });
 
-test('solicitação de R$ 30,00 mantém o valor no cartão e o titular na opção Pix', async () => {
+test('preserva o valor, a formatação e as quebras de linha do modelo sem acrescentar cabeçalho', async () => {
   const { manager, sends } = fixture();
-  await manager.sendPixPayment('test', '11999999999', { ...payment, amount: '30.00' });
+  const body = 'Olá, *Maria*!\n\n💰 Valor: R$ 30,00\n\nEnvie o comprovante para confirmar.';
+  await manager.sendPixPayment('test', '11999999999', { ...payment, amount: '30.00', body });
   const params = JSON.parse(sends[0][1].interactiveMessage.nativeFlowMessage.buttons[0].buttonParamsJson);
-  assert.deepEqual(params.total_amount, { value: 3000, offset: 100 });
-  assert.equal(params.order.subtotal.value, 3000);
-  assert.equal(params.payment_settings[0].pix_static_code.merchant_name, payment.pix.merchantName);
+  assert.equal(sends[0][1].interactiveMessage.body.text, body);
+  assert.equal(params.copy_code, payment.pix.key);
+  assert.equal(params.order, undefined);
+  assert.equal(params.total_amount, undefined);
 });
 
 test('não repete o envio nem informa sucesso em falha, timeout ou recusa do servidor', async () => {

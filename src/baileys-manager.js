@@ -249,7 +249,7 @@ export class BaileysSessionManager {
   }
 
   async sendPixPayment(sessionName, number, payload) {
-    const { body, parameters } = pixPaymentParameters(payload);
+    const { body, parameters, referenceId } = pixPaymentParameters(payload);
     if (!/^\+?[\d().\s-]{10,24}$/.test(String(number ?? ''))) {
       const error = new Error('Informe o telefone do destinatário com DDD.');
       error.statusCode = 400;
@@ -260,12 +260,10 @@ export class BaileysSessionManager {
     const jid = await this.resolveJid(socket, number);
     const message = generateWAMessageFromContent(jid, {
       interactiveMessage: {
-        header: { hasMediaAttachment: false },
         body: { text: body },
         nativeFlowMessage: {
-          // payment_info mostra apenas a chave. A cobrança com total usa
-          // review_and_pay e o mesmo fluxo order_details no nó biz.
-          buttons: [{ name: 'review_and_pay', buttonParamsJson: JSON.stringify(parameters) }],
+          // O botão copia a chave sem criar um pedido ou resumo de cobrança.
+          buttons: [{ name: 'cta_copy', buttonParamsJson: JSON.stringify(parameters) }],
           messageParamsJson: '{}',
           messageVersion: 1,
         },
@@ -279,7 +277,13 @@ export class BaileysSessionManager {
       messageId: message.key.id,
       additionalNodes: [
         { tag: 'bot', attrs: { biz_bot: '1' } },
-        { tag: 'biz', attrs: { native_flow_name: 'order_details' } },
+        {
+          tag: 'biz', attrs: {},
+          content: [{
+            tag: 'interactive', attrs: { type: 'native_flow', v: '1' },
+            content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }],
+          }],
+        },
       ],
     });
     const { node, error } = await confirmation;
@@ -288,7 +292,7 @@ export class BaileysSessionManager {
     if (node.attrs?.error)
       throw new Error(`O WhatsApp recusou a cobrança Pix (código ${node.attrs.error}).`);
     // Confirmação de transporte; não representa pagamento nem exibição no celular.
-    return { ok: true, messageId: message.key.id, referenceId: parameters.reference_id, accepted: true };
+    return { ok: true, messageId: message.key.id, referenceId, accepted: true };
   }
 
   // Publica um Status (story) do WhatsApp. Tipo:

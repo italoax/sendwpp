@@ -4,7 +4,7 @@ Conecta o WhatsApp ao Gestor para enviar mensagens e gerenciar a conta pelo sist
 
 - Conexão por QR Code ou código de vinculação.
 - Envio de textos, imagens, vídeos, áudios e documentos.
-- Solicitação de cobrança Pix com valor pelo Baileys.
+- Mensagem de cobrança com botão para copiar a chave Pix pelo Baileys.
 - Publicação e exclusão de status.
 - Verificação de números que possuem WhatsApp.
 - Acompanhamento da conexão e troca da conta vinculada.
@@ -30,13 +30,18 @@ Conecta o WhatsApp ao Gestor para enviar mensagens e gerenciar a conta pelo sist
 
 `amount` é o valor em reais, positivo, com até duas casas decimais. Os tipos
 aceitos são CPF, CNPJ, Celular/PHONE, Email e Aleatória/EVP. A mensagem usa
-`order_details` / `review_and_pay` para solicitar pagamento com total em destaque
-e Pix como forma de pagamento, em vez do cartão `payment_info` que apresenta a
-chave para copiar. O pedido permanece pendente e usa a chave estática. Não processa dinheiro
-nem confirma recebimento: `accepted: true` indica apenas confirmação de transporte
+`cta_copy` para mostrar o texto do modelo e o botão **Copiar chave Pix**. O botão
+copia a chave cadastrada, sem gerar um código Pix com valor embutido. O valor
+deve aparecer no texto (no Gestor, use `{valor}`). Não envia resumo de pedido,
+número de cobrança, quantidade, total no cabeçalho ou ação de atualizar status.
+`referenceId` identifica a requisição apenas na resposta da API e não vai na
+mensagem. Não processa dinheiro nem confirma recebimento:
+`accepted: true` indica apenas confirmação de transporte
 pelo servidor WhatsApp. Valide a exibição e a ação Pix no celular antes do uso;
 a renderização depende da conta e do aplicativo. Não repita uma requisição que
 terminou sem confirmação antes de conferir a conversa.
 
 No Gestor, adicione `{cobranca_pix}` ao modelo sem anexo para usar a chave de
-Minha Conta e o valor do cliente. Reinicie os dois serviços após atualizar.
+Minha Conta. Use `{valor}` no texto para apresentar o valor do cliente.
+Para esta alteração, atualize e reinicie a `whatsapp-api`; o marcador e o
+endpoint do Gestor continuam os mesmos. Apenas os novos envios usam o formato.
