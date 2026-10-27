@@ -34,7 +34,8 @@ export function pixPaymentParameters(payload) {
     key = key.replace(/\D/g, '');
     if (keyType === 'PHONE') {
       if (key.length === 10 || key.length === 11) key = `55${key}`;
-      if (!/^55\d{10,11}$/.test(key)) invalid('Informe um celular Pix brasileiro com DDD.');
+      if (!/^55\d{2}9\d{8}$/.test(key))
+        invalid('A chave Pix de celular deve ter DDD e 9 dígitos, incluindo o 9 inicial. Copie a chave cadastrada no app do banco.');
       key = `+${key}`;
     } else if (key.length !== (keyType === 'CPF' ? 11 : 14)) {
       invalid('Chave Pix inválida para o tipo informado.');

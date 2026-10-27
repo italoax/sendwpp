@@ -63,6 +63,23 @@ test('rejeita valores imprecisos e chaves incompletas antes de conectar', async 
   await assert.rejects(manager.sendPixPayment('test', '123@g.us', payment), { statusCode: 400 });
 });
 
+test('bloqueia chave de celular sem nono dígito sem tentar adivinhar o recebedor', async () => {
+  const manager = new BaileysSessionManager();
+  manager.requireConnectedSocket = () => assert.fail('não deve conectar nem enviar');
+  for (const key of ['(11) 8888-7777', '1188887777', '551188887777', '+551188887777', '(11) 88888-7777']) {
+    await assert.rejects(manager.sendPixPayment('test', '11999999999', {
+      ...payment, pix: { ...payment.pix, keyType: 'Celular', key },
+    }), error => error.statusCode === 400 && /9 dígitos/.test(error.message));
+  }
+});
+
+test('celular copiado do banco mantém todos os dígitos no código Pix', () => {
+  for (const key of ['11988887777', '(11) 98888-7777', '+55 (11) 98888-7777']) {
+    const result = pixPaymentParameters({ ...payment, pix: { ...payment.pix, keyType: 'Celular', key } });
+    assert.equal(fields(fields(result.parameters.copy_code)['26'])['01'], '+5511988887777');
+  }
+});
+
 function fixture() {
   const manager = new BaileysSessionManager();
   const session = manager.getOrCreateState('test');

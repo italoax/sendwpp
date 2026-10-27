@@ -42,6 +42,9 @@ A cidade pode ser informada em `pix.merchantCity` ou `PIX_MERCHANT_CITY`. Sem
 configuração, o campo informativo recebe `NAO INFORMADO`; não é atribuída uma
 cidade fictícia ao titular. Nome e cidade são normalizados e limitados a 25 e
 15 caracteres, respectivamente. Chaves maiores que 77 bytes são rejeitadas.
+Chaves de celular brasileiras exigem DDD e nove dígitos, começando por 9.
+O sistema não acrescenta um nono dígito ausente: copie a chave exata cadastrada
+no banco para evitar apontar o pagamento a outro recebedor.
 Não cria uma cobrança dinâmica no banco nem confirma recebimento:
 `accepted: true` indica apenas confirmação de transporte
 pelo servidor WhatsApp. Valide a exibição e a ação Pix no celular antes do uso;
