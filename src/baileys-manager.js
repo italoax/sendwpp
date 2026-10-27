@@ -262,7 +262,7 @@ export class BaileysSessionManager {
       interactiveMessage: {
         body: { text: body },
         nativeFlowMessage: {
-          // O botão copia a chave sem criar um pedido ou resumo de cobrança.
+          // Copia o BR Code completo com valor, sem um resumo de pedido.
           buttons: [{ name: 'cta_copy', buttonParamsJson: JSON.stringify(parameters) }],
           messageParamsJson: '{}',
           messageVersion: 1,
@@ -276,7 +276,6 @@ export class BaileysSessionManager {
     await socket.relayMessage(jid, message.message, {
       messageId: message.key.id,
       additionalNodes: [
-        { tag: 'bot', attrs: { biz_bot: '1' } },
         {
           tag: 'biz', attrs: {},
           content: [{

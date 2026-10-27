@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createPixCode } from './pix-br-code.js';
 
 function invalid(message) {
   const error = new Error(message);
@@ -25,7 +26,10 @@ export function pixPaymentParameters(payload) {
     invalid('Informe o nome do titular Pix (até 100 caracteres).');
   if (!['CPF', 'CNPJ', 'PHONE', 'EMAIL', 'EVP'].includes(keyType))
     invalid('Informe o tipo da chave Pix: CPF, CNPJ, Celular, Email ou Aleatória.');
-  if (['CPF', 'CNPJ', 'PHONE'].includes(keyType)) {
+  if (keyType === 'CNPJ') {
+    key = key.replace(/[./\s-]/g, '').toUpperCase();
+    if (!/^[A-Z0-9]{12}\d{2}$/.test(key)) invalid('Chave Pix inválida para o tipo informado.');
+  } else if (['CPF', 'PHONE'].includes(keyType)) {
     if (!/^[+\d()./\s-]+$/.test(key)) invalid('Chave Pix inválida.');
     key = key.replace(/\D/g, '');
     if (keyType === 'PHONE') {
@@ -40,14 +44,20 @@ export function pixPaymentParameters(payload) {
   } else if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(key)) {
     invalid('Chave Pix aleatória inválida.');
   }
+  if (keyType === 'EMAIL' || keyType === 'EVP') key = key.toLowerCase();
   const body = String(payload?.body ?? '').trim() || 'Você recebeu uma solicitação de pagamento.';
   if (body.length > 4096) invalid('O texto da cobrança deve ter até 4096 caracteres.');
+  const referenceId = randomUUID().replace(/-/g, '').slice(0, 25);
+  const code = createPixCode({
+    key, merchantName, amountCents: cents, txid: referenceId,
+    merchantCity: payload?.pix?.merchantCity ?? process.env.PIX_MERCHANT_CITY ?? 'NAO INFORMADO',
+  });
   return {
     body,
-    referenceId: randomUUID(),
+    referenceId,
     parameters: {
-      display_text: 'Copiar chave Pix',
-      copy_code: key,
+      display_text: 'Copiar código Pix',
+      copy_code: code,
     },
   };
 }

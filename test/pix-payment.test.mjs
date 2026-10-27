@@ -11,13 +11,27 @@ const payment = {
   pix: { key: 'recebimentos@example.com', keyType: 'Email', merchantName: 'Titular' },
 };
 
-test('mantém referências privadas e aceita valores em reais sem embutir um pedido no botão', () => {
+function fields(code) {
+  const result = {};
+  for (let offset = 0; offset < code.length;) {
+    const id = code.slice(offset, offset + 2), length = Number(code.slice(offset + 2, offset + 4));
+    assert.ok(Number.isInteger(length) && length > 0 && offset + 4 + length <= code.length);
+    result[id] = code.slice(offset + 4, offset + 4 + length);
+    offset += 4 + length;
+  }
+  return result;
+}
+
+test('gera Pix Copia e Cola com o valor exato e identificador distinto sem resumo de pedido', () => {
   const first = pixPaymentParameters(payment);
   assert.notEqual(first.referenceId, pixPaymentParameters(payment).referenceId);
-  for (const amount of ['0.01', '30.01', 30]) {
-    assert.deepEqual(pixPaymentParameters({ ...payment, amount }).parameters, {
-      display_text: 'Copiar chave Pix', copy_code: payment.pix.key,
-    });
+  for (const [amount, expected] of [['0.01', '0.01'], ['30.01', '30.01'], [30, '30.00']]) {
+    const result = pixPaymentParameters({ ...payment, amount });
+    assert.equal(result.parameters.display_text, 'Copiar código Pix');
+    const code = fields(result.parameters.copy_code);
+    assert.equal(code['54'], expected);
+    assert.equal(fields(code['62'])['05'], result.referenceId);
+    assert.match(result.referenceId, /^[a-zA-Z0-9]{25}$/);
   }
 });
 
@@ -28,10 +42,12 @@ test('normaliza os tipos de chave usados em Minha Conta sem alterar email ou EVP
     ['CPF', '123.456.789-01', '12345678901'],
     ['CNPJ', '12.345.678/0001-90', '12345678000190'],
     ['Email', 'a@example.com', 'a@example.com'],
+    ['Email', 'Titular@EXAMPLE.COM', 'titular@example.com'],
+    ['CNPJ', '12.ABC.345/01DE-35', '12ABC34501DE35'],
     ['Aleatória', '12345678-1234-1234-1234-123456789abc', '12345678-1234-1234-1234-123456789abc'],
   ]) {
     const params = pixPaymentParameters({ ...payment, pix: { ...payment.pix, keyType, key } }).parameters;
-    assert.equal(params.copy_code, expectedKey);
+    assert.equal(fields(fields(params.copy_code)['26'])['01'], expectedKey);
   }
 });
 
@@ -41,7 +57,7 @@ test('rejeita valores imprecisos e chaves incompletas antes de conectar', async 
   for (const amount of ['0', '-1', 'NaN', 'Infinity', '', '30,00', '0.001', '1e2', true, {}, '10000000000']) {
     await assert.rejects(manager.sendPixPayment('test', '11999999999', { ...payment, amount }), { statusCode: 400 });
   }
-  for (const pix of [{}, { ...payment.pix, keyType: 'Outro' }, { ...payment.pix, key: 'inválida' }]) {
+  for (const pix of [{}, { ...payment.pix, keyType: 'Outro' }, { ...payment.pix, key: 'inválida' }, { ...payment.pix, key: 'a'.repeat(66) + '@example.com' }]) {
     await assert.rejects(manager.sendPixPayment('test', '11999999999', { ...payment, pix }), { statusCode: 400 });
   }
   await assert.rejects(manager.sendPixPayment('test', '123@g.us', payment), { statusCode: 400 });
@@ -64,7 +80,7 @@ function fixture() {
   return { manager, session, sends };
 }
 
-test('envia só a mensagem e a ação de copiar a chave, sem resumo ou controles de pedido', async () => {
+test('envia mensagem e botão de copiar o código Pix, sem resumo ou marcação de IA', async () => {
   const { manager, sends } = fixture();
   const result = await manager.sendPixPayment('test', '11999999999', payment);
   assert.equal(result.ok, true);
@@ -74,12 +90,19 @@ test('envia só a mensagem e a ação de copiar a chave, sem resumo ou controles
   assert.equal(flow.buttons.length, 1);
   assert.equal(flow.buttons[0].name, 'cta_copy');
   const params = JSON.parse(flow.buttons[0].buttonParamsJson);
-  assert.deepEqual(params, { display_text: 'Copiar chave Pix', copy_code: payment.pix.key });
+  assert.equal(params.display_text, 'Copiar código Pix');
+  assert.match(params.copy_code, /^000201/);
+  const code = fields(params.copy_code);
+  assert.equal(fields(code['26'])['01'], payment.pix.key);
+  assert.equal(code['54'], '30.01');
+  assert.equal(fields(code['62'])['05'], result.referenceId);
   assert.equal(decoded.interactiveMessage.body.text, payment.body);
   assert.equal(decoded.interactiveMessage.header, null);
-  assert.equal(JSON.stringify(decoded).includes(result.referenceId), false);
   assert.doesNotMatch(JSON.stringify(decoded), /order_details|review_and_pay|payment_info|total_amount|retailer_id|quantity/);
   const biz = sends[0][2].additionalNodes.find(node => node.tag === 'biz');
+  assert.equal(sends[0][2].additionalNodes.some(node => node.tag === 'bot'), false, 'Modelo Pix não recebe a marcação de IA');
+  assert.equal(decoded.messageContextInfo?.botMetadata, undefined);
+  assert.equal(decoded.interactiveMessage.contextInfo?.forwardedAiBotMessageInfo, undefined);
   assert.equal(biz.attrs.native_flow_name, undefined);
   assert.equal(biz.content[0].attrs.type, 'native_flow');
   assert.equal(biz.content[0].content[0].attrs.name, 'mixed');
@@ -91,7 +114,8 @@ test('preserva o valor, a formatação e as quebras de linha do modelo sem acres
   await manager.sendPixPayment('test', '11999999999', { ...payment, amount: '30.00', body });
   const params = JSON.parse(sends[0][1].interactiveMessage.nativeFlowMessage.buttons[0].buttonParamsJson);
   assert.equal(sends[0][1].interactiveMessage.body.text, body);
-  assert.equal(params.copy_code, payment.pix.key);
+  assert.equal(fields(params.copy_code)['54'], '30.00');
+  assert.equal(fields(fields(params.copy_code)['26'])['01'], payment.pix.key);
   assert.equal(params.order, undefined);
   assert.equal(params.total_amount, undefined);
 });
