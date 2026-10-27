@@ -15,6 +15,8 @@ test('preserva os centavos e gera referências distintas para cobranças pendent
   const first = pixPaymentParameters(payment).parameters;
   assert.deepEqual(first.total_amount, { value: 3001, offset: 100 });
   assert.equal(first.order.status, 'pending');
+  assert.equal(first.order_type, 'PAYMENT_REQUEST');
+  assert.equal(first.payment_type, 'br');
   assert.equal(first.payment_status, undefined);
   assert.notEqual(first.reference_id, pixPaymentParameters(payment).parameters.reference_id);
   assert.equal(pixPaymentParameters({ ...payment, amount: '0.01' }).parameters.total_amount.value, 1);
@@ -65,20 +67,36 @@ function fixture() {
   return { manager, session, sends };
 }
 
-test('envia protobuf válido, mantém o Pix pendente e exige aceitação do servidor', async () => {
+test('envia solicitação com valor via review_and_pay e order_details, em vez de copiar chave', async () => {
   const { manager, sends } = fixture();
   const result = await manager.sendPixPayment('test', '11999999999', payment);
   assert.equal(result.ok, true);
   assert.equal(result.accepted, true);
   const decoded = proto.Message.decode(proto.Message.encode(sends[0][1]).finish());
   const flow = decoded.interactiveMessage.nativeFlowMessage;
-  assert.equal(flow.buttons[0].name, 'payment_info');
+  assert.equal(flow.buttons.length, 1);
+  assert.equal(flow.buttons[0].name, 'review_and_pay');
   const params = JSON.parse(flow.buttons[0].buttonParamsJson);
   assert.equal(params.reference_id, result.referenceId);
   assert.equal(params.total_amount.value, 3001);
   assert.equal(params.order.status, 'pending');
+  assert.equal(params.order_type, 'PAYMENT_REQUEST');
+  assert.equal(params.currency, 'BRL');
+  assert.equal(params.payment_status, undefined);
+  assert.equal(params.payment_timestamp, undefined);
+  assert.equal(params.order.items[0].amount.value * params.order.items[0].quantity, params.total_amount.value);
+  assert.deepEqual(params.order.tax, { value: 0, offset: 100 });
   assert.equal(params.payment_settings[0].pix_static_code.key, payment.pix.key);
-  assert.equal(sends[0][2].additionalNodes.find(node => node.tag === 'biz').attrs.native_flow_name, 'payment_info');
+  assert.equal(sends[0][2].additionalNodes.find(node => node.tag === 'biz').attrs.native_flow_name, 'order_details');
+});
+
+test('solicitação de R$ 30,00 mantém o valor no cartão e o titular na opção Pix', async () => {
+  const { manager, sends } = fixture();
+  await manager.sendPixPayment('test', '11999999999', { ...payment, amount: '30.00' });
+  const params = JSON.parse(sends[0][1].interactiveMessage.nativeFlowMessage.buttons[0].buttonParamsJson);
+  assert.deepEqual(params.total_amount, { value: 3000, offset: 100 });
+  assert.equal(params.order.subtotal.value, 3000);
+  assert.equal(params.payment_settings[0].pix_static_code.merchant_name, payment.pix.merchantName);
 });
 
 test('não repete o envio nem informa sucesso em falha, timeout ou recusa do servidor', async () => {

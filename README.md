@@ -30,7 +30,9 @@ Conecta o WhatsApp ao Gestor para enviar mensagens e gerenciar a conta pelo sist
 
 `amount` é o valor em reais, positivo, com até duas casas decimais. Os tipos
 aceitos são CPF, CNPJ, Celular/PHONE, Email e Aleatória/EVP. A mensagem usa
-`payment_info` com chave estática, valor e pedido pendente. Não processa dinheiro
+`order_details` / `review_and_pay` para solicitar pagamento com total em destaque
+e Pix como forma de pagamento, em vez do cartão `payment_info` que apresenta a
+chave para copiar. O pedido permanece pendente e usa a chave estática. Não processa dinheiro
 nem confirma recebimento: `accepted: true` indica apenas confirmação de transporte
 pelo servidor WhatsApp. Valide a exibição e a ação Pix no celular antes do uso;
 a renderização depende da conta e do aplicativo. Não repita uma requisição que

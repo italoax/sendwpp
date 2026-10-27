@@ -43,18 +43,21 @@ export function pixPaymentParameters(payload) {
   const body = String(payload?.body ?? '').trim() || 'Você recebeu uma solicitação de pagamento.';
   if (body.length > 4096) invalid('O texto da cobrança deve ter até 4096 caracteres.');
   const total = { value: cents, offset: 100 };
+  const referenceId = randomUUID();
   return {
     body,
     parameters: {
       currency: 'BRL',
+      payment_type: 'br',
       total_amount: total,
-      reference_id: randomUUID(),
+      reference_id: referenceId,
       type: 'digital-goods',
+      order_type: 'PAYMENT_REQUEST',
       order: {
         status: 'pending',
-        order_type: 'PAYMENT_REQUEST',
         subtotal: total,
-        items: [{ name: 'Cobrança Pix', amount: total, quantity: 1 }],
+        tax: { value: 0, offset: 100 },
+        items: [{ retailer_id: referenceId, name: 'Cobrança Pix', amount: total, quantity: 1 }],
       },
       payment_settings: [{
         type: 'pix_static_code',

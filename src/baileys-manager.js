@@ -260,9 +260,12 @@ export class BaileysSessionManager {
     const jid = await this.resolveJid(socket, number);
     const message = generateWAMessageFromContent(jid, {
       interactiveMessage: {
+        header: { hasMediaAttachment: false },
         body: { text: body },
         nativeFlowMessage: {
-          buttons: [{ name: 'payment_info', buttonParamsJson: JSON.stringify(parameters) }],
+          // payment_info mostra apenas a chave. A cobrança com total usa
+          // review_and_pay e o mesmo fluxo order_details no nó biz.
+          buttons: [{ name: 'review_and_pay', buttonParamsJson: JSON.stringify(parameters) }],
           messageParamsJson: '{}',
           messageVersion: 1,
         },
@@ -276,7 +279,7 @@ export class BaileysSessionManager {
       messageId: message.key.id,
       additionalNodes: [
         { tag: 'bot', attrs: { biz_bot: '1' } },
-        { tag: 'biz', attrs: { native_flow_name: 'payment_info' } },
+        { tag: 'biz', attrs: { native_flow_name: 'order_details' } },
       ],
     });
     const { node, error } = await confirmation;
